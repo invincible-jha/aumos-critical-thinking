@@ -1,0 +1,76 @@
+version: "3.9"
+
+# Development compose stack for aumos-critical-thinking.
+# Starts Postgres, Kafka + Zookeeper, and the service itself.
+# Use: docker compose -f docker-compose.dev.yml up
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aumos_critical_thinking
+      POSTGRES_USER: aumos
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "5442:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aumos -d aumos_critical_thinking"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2191:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9102
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9102:9092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  critical-thinking:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      AUMOS_CRITICAL_DATABASE_URL: postgresql+asyncpg://aumos:changeme@postgres:5432/aumos_critical_thinking
+      AUMOS_CRITICAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AUMOS_ENVIRONMENT: development
+      AUMOS_LOG_LEVEL: DEBUG
+      AUMOS_SECRET_KEY: dev-secret-key-not-for-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/live'); r.raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
