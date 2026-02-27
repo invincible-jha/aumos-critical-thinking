@@ -20,11 +20,20 @@ from aumos_common.events import EventPublisher, Topics
 from aumos_common.observability import get_logger
 
 from aumos_critical_thinking.core.interfaces import (
+    IAlternativeGeneratorAdapter,
+    IArgumentExtractorAdapter,
     IAtrophyAssessmentRepository,
+    IAtrophyMonitorAdapter,
     IBiasDetectionRepository,
     IChallengeGeneratorAdapter,
     IChallengeRepository,
+    ICognitiveBiasDetectorAdapter,
+    IConfidenceScorerAdapter,
+    IDebateSimulatorAdapter,
+    IEvidenceGathererAdapter,
+    IFallacyDetectorAdapter,
     IJudgmentValidationRepository,
+    IReasoningFrameworkAdapter,
     ITrainingRecommendationRepository,
 )
 from aumos_critical_thinking.core.models import (
@@ -1185,3 +1194,621 @@ class TrainingRecommenderService:
             )
 
         return recommendation
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 adapter-wrapper services (added with new domain adapters)
+# ---------------------------------------------------------------------------
+
+
+class ReasoningFrameworkService:
+    """Orchestrates structured reasoning using CoT and ToT strategies.
+
+    Wraps the ReasoningFramework adapter with service-level strategy selection
+    and structured logging, providing a clean interface for route handlers.
+    """
+
+    VALID_STRATEGIES: frozenset[str] = frozenset(
+        {"chain_of_thought", "tree_of_thought", "auto"}
+    )
+
+    def __init__(self, reasoning_adapter: IReasoningFrameworkAdapter) -> None:
+        """Initialise ReasoningFrameworkService.
+
+        Args:
+            reasoning_adapter: IReasoningFrameworkAdapter implementation.
+        """
+        self._reasoning = reasoning_adapter
+
+    async def reason(
+        self,
+        problem: str,
+        context: dict[str, Any] | None = None,
+        strategy: str = "auto",
+        max_steps: int = 8,
+    ) -> Any:
+        """Build a complete reasoning trace for a problem.
+
+        Args:
+            problem: Problem or question to reason about.
+            context: Optional context dict with domain and constraints.
+            strategy: chain_of_thought | tree_of_thought | auto.
+            max_steps: Maximum steps / branching limit.
+
+        Returns:
+            ReasoningTrace dataclass with selected path and metadata.
+
+        Raises:
+            ValueError: If strategy is not valid.
+        """
+        if strategy not in self.VALID_STRATEGIES:
+            raise ValueError(
+                f"Invalid strategy: {strategy!r}. Valid: {sorted(self.VALID_STRATEGIES)}"
+            )
+        if max_steps < 1:
+            raise ValueError(f"max_steps must be at least 1. Got {max_steps}.")
+
+        trace = await self._reasoning.create_reasoning_trace(
+            problem=problem,
+            context=context,
+            strategy=strategy,
+            max_steps=max_steps,
+        )
+        logger.info(
+            "Reasoning trace created",
+            strategy=strategy,
+            max_steps=max_steps,
+        )
+        return trace
+
+    async def explore_alternatives(
+        self,
+        problem: str,
+        context: dict[str, Any] | None = None,
+        branching_factor: int = 3,
+        max_depth: int = 4,
+    ) -> list[Any]:
+        """Explore multiple reasoning paths using Tree-of-Thought.
+
+        Args:
+            problem: Problem to reason about.
+            context: Optional context dict.
+            branching_factor: Number of branches at each node.
+            max_depth: Maximum tree depth.
+
+        Returns:
+            List of ReasoningPath dataclasses sorted by confidence.
+        """
+        paths = await self._reasoning.explore_tree_of_thought(
+            problem=problem,
+            context=context,
+            branching_factor=branching_factor,
+            max_depth=max_depth,
+        )
+        logger.info(
+            "Tree-of-Thought exploration complete",
+            branching_factor=branching_factor,
+            max_depth=max_depth,
+            paths_explored=len(paths),
+        )
+        return paths
+
+
+class ArgumentAnalysisService:
+    """Extracts and analyses arguments from text.
+
+    Wraps ArgumentExtractor with service-level validation and provides
+    argument graphs and strength scoring for downstream reasoning services.
+    """
+
+    def __init__(self, extractor_adapter: IArgumentExtractorAdapter) -> None:
+        """Initialise ArgumentAnalysisService.
+
+        Args:
+            extractor_adapter: IArgumentExtractorAdapter implementation.
+        """
+        self._extractor = extractor_adapter
+
+    async def analyse_text(
+        self,
+        text: str,
+        domain: str | None = None,
+    ) -> dict[str, Any]:
+        """Extract arguments, build graph, and score strength.
+
+        Args:
+            text: Source text to analyse.
+            domain: Optional domain context.
+
+        Returns:
+            Dict with arguments, argument_graph, and scored_arguments keys.
+
+        Raises:
+            ValueError: If text is empty.
+        """
+        if not text.strip():
+            raise ValueError("Cannot analyse empty text.")
+
+        arguments = await self._extractor.extract_arguments(text=text, domain=domain)
+        graph = await self._extractor.build_argument_graph(arguments=arguments)
+        scored = [
+            {
+                "argument": arg,
+                "strength": await self._extractor.score_argument_strength(arg),
+            }
+            for arg in arguments
+        ]
+
+        logger.info(
+            "Argument analysis complete",
+            argument_count=len(arguments),
+            domain=domain,
+        )
+        return {
+            "arguments": arguments,
+            "argument_graph": graph,
+            "scored_arguments": scored,
+        }
+
+
+class FallacyDetectionService:
+    """Detects and reports logical fallacies in text.
+
+    Wraps FallacyDetector and provides structured fallacy reports
+    suitable for direct display or further training pipeline use.
+    """
+
+    def __init__(self, fallacy_adapter: IFallacyDetectorAdapter) -> None:
+        """Initialise FallacyDetectionService.
+
+        Args:
+            fallacy_adapter: IFallacyDetectorAdapter implementation.
+        """
+        self._detector = fallacy_adapter
+
+    async def analyse(
+        self,
+        text: str,
+        context: str | None = None,
+    ) -> Any:
+        """Detect fallacies and return a structured report.
+
+        Args:
+            text: Source text to analyse.
+            context: Optional contextual description.
+
+        Returns:
+            FallacyReport dataclass with severity and recommendations.
+
+        Raises:
+            ValueError: If text is empty.
+        """
+        if not text.strip():
+            raise ValueError("Cannot analyse empty text for fallacies.")
+
+        detections = await self._detector.detect_fallacies(text=text, context=context)
+        report = await self._detector.generate_report(
+            text=text,
+            detections=detections,
+            context=context,
+        )
+        logger.info(
+            "Fallacy detection complete",
+            fallacy_count=len(detections),
+        )
+        return report
+
+
+class EvidenceAnalysisService:
+    """Extracts claims, fact-checks them, and builds evidence chains.
+
+    Wraps EvidenceGatherer with service-level orchestration, coordinating
+    claim extraction, fact-checking, and citation generation.
+    """
+
+    def __init__(self, evidence_adapter: IEvidenceGathererAdapter) -> None:
+        """Initialise EvidenceAnalysisService.
+
+        Args:
+            evidence_adapter: IEvidenceGathererAdapter implementation.
+        """
+        self._evidence = evidence_adapter
+
+    async def analyse_claims(
+        self,
+        text: str,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        """Extract claims, fact-check each one, and build an evidence chain.
+
+        Args:
+            text: Source text to analyse.
+            context: Optional domain context.
+
+        Returns:
+            Dict with claims, fact_checks, and evidence_chain keys.
+
+        Raises:
+            ValueError: If text is empty.
+        """
+        if not text.strip():
+            raise ValueError("Cannot analyse empty text for evidence.")
+
+        claims = await self._evidence.extract_claims(text=text)
+        fact_checks = [
+            await self._evidence.fact_check(claim=claim, context=context)
+            for claim in claims
+        ]
+        evidence_chain = await self._evidence.build_evidence_chain(
+            claims=claims,
+            context=context,
+        )
+
+        logger.info(
+            "Evidence analysis complete",
+            claim_count=len(claims),
+        )
+        return {
+            "claims": claims,
+            "fact_checks": fact_checks,
+            "evidence_chain": evidence_chain,
+        }
+
+
+class CognitiveBiasService:
+    """Detects cognitive reasoning biases in text and arguments.
+
+    Distinct from BiasDetectorService (which detects automation bias).
+    This service detects cognitive biases like confirmation bias, anchoring,
+    availability heuristic, etc., in written reasoning and arguments.
+    """
+
+    def __init__(self, bias_adapter: ICognitiveBiasDetectorAdapter) -> None:
+        """Initialise CognitiveBiasService.
+
+        Args:
+            bias_adapter: ICognitiveBiasDetectorAdapter implementation.
+        """
+        self._detector = bias_adapter
+
+    async def detect(
+        self,
+        text: str,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        """Detect cognitive biases and generate mitigation recommendations.
+
+        Args:
+            text: Source text to analyse.
+            context: Optional domain context.
+
+        Returns:
+            Dict with detection_result and mitigations keys.
+
+        Raises:
+            ValueError: If text is empty.
+        """
+        if not text.strip():
+            raise ValueError("Cannot analyse empty text for cognitive biases.")
+
+        result = await self._detector.detect_biases(text=text, context=context)
+        mitigations = await self._detector.recommend_mitigations(result=result)
+
+        logger.info(
+            "Cognitive bias detection complete",
+            bias_count=len(getattr(result, "detected_biases", [])),
+        )
+        return {
+            "detection_result": result,
+            "mitigations": mitigations,
+        }
+
+
+class AlternativeHypothesisService:
+    """Generates and compares alternative hypotheses.
+
+    Wraps AlternativeGenerator with service-level validation and provides
+    devil's advocate arguments and comparison matrices for structured analysis.
+    """
+
+    def __init__(self, generator_adapter: IAlternativeGeneratorAdapter) -> None:
+        """Initialise AlternativeHypothesisService.
+
+        Args:
+            generator_adapter: IAlternativeGeneratorAdapter implementation.
+        """
+        self._generator = generator_adapter
+
+    async def generate_and_compare(
+        self,
+        hypothesis: str,
+        context: dict[str, Any] | None = None,
+        count: int = 5,
+        include_devil_advocate: bool = True,
+    ) -> dict[str, Any]:
+        """Generate alternatives, optionally add devil's advocate, and compare.
+
+        Args:
+            hypothesis: The hypothesis to generate alternatives for.
+            context: Optional domain context.
+            count: Number of alternative hypotheses to generate.
+            include_devil_advocate: True to include a devil's advocate argument.
+
+        Returns:
+            Dict with alternatives, devil_advocate, and comparison_matrix keys.
+
+        Raises:
+            ValueError: If hypothesis is empty or count is not positive.
+        """
+        if not hypothesis.strip():
+            raise ValueError("Hypothesis cannot be empty.")
+        if count < 1:
+            raise ValueError(f"count must be at least 1. Got {count}.")
+
+        alternatives = await self._generator.generate_alternatives(
+            hypothesis=hypothesis,
+            context=context,
+            count=count,
+        )
+
+        devil_advocate = None
+        if include_devil_advocate:
+            devil_advocate = await self._generator.devil_advocate(
+                hypothesis=hypothesis,
+                context=context,
+            )
+            all_hypotheses = alternatives + ([devil_advocate] if devil_advocate else [])
+        else:
+            all_hypotheses = alternatives
+
+        comparison_matrix = None
+        if all_hypotheses:
+            comparison_matrix = await self._generator.build_comparison_matrix(
+                hypotheses=all_hypotheses,
+                dimensions=None,
+            )
+
+        logger.info(
+            "Alternative hypothesis generation complete",
+            alternatives_count=len(alternatives),
+            include_devil_advocate=include_devil_advocate,
+        )
+        return {
+            "alternatives": alternatives,
+            "devil_advocate": devil_advocate,
+            "comparison_matrix": comparison_matrix,
+        }
+
+
+class ConfidenceScoringService:
+    """Scores and calibrates reasoning confidence.
+
+    Wraps ReasoningConfidenceScorer (a pure-computation adapter) with
+    service-level orchestration and overconfidence flagging.
+    """
+
+    def __init__(self, scorer_adapter: IConfidenceScorerAdapter) -> None:
+        """Initialise ConfidenceScoringService.
+
+        Args:
+            scorer_adapter: IConfidenceScorerAdapter implementation.
+        """
+        self._scorer = scorer_adapter
+
+    def score(
+        self,
+        claim: str,
+        evidence_items: list[Any],
+        assumptions: list[str],
+        reasoning_steps: list[Any],
+    ) -> dict[str, Any]:
+        """Generate a full confidence report for a claim.
+
+        Args:
+            claim: The claim being evaluated.
+            evidence_items: Supporting evidence items.
+            assumptions: List of underlying assumptions.
+            reasoning_steps: ReasoningStep dataclasses used.
+
+        Returns:
+            Dict with report and is_overconfident keys.
+
+        Raises:
+            ValueError: If claim is empty.
+        """
+        if not claim.strip():
+            raise ValueError("Claim cannot be empty for confidence scoring.")
+
+        report = self._scorer.generate_report(
+            claim=claim,
+            evidence_items=evidence_items,
+            assumptions=assumptions,
+            reasoning_steps=reasoning_steps,
+        )
+        is_overconfident = self._scorer.detect_overconfidence(report)
+
+        if is_overconfident:
+            logger.warning(
+                "Overconfidence detected in reasoning claim",
+                claim_preview=claim[:80],
+                composite_score=getattr(report, "composite_score", None),
+            )
+        else:
+            logger.info(
+                "Confidence scoring complete",
+                composite_score=getattr(report, "composite_score", None),
+            )
+
+        return {
+            "report": report,
+            "is_overconfident": is_overconfident,
+        }
+
+
+class DebateSimulationService:
+    """Orchestrates structured debate simulations.
+
+    Wraps DebateSimulator with service-level parameter validation and
+    provides full transcript generation for analysis and training.
+    """
+
+    def __init__(self, debate_adapter: IDebateSimulatorAdapter) -> None:
+        """Initialise DebateSimulationService.
+
+        Args:
+            debate_adapter: IDebateSimulatorAdapter implementation.
+        """
+        self._simulator = debate_adapter
+
+    async def simulate(
+        self,
+        proposition: str,
+        rounds: int = 3,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Run a full structured debate for a proposition.
+
+        Args:
+            proposition: The proposition to debate.
+            rounds: Number of argument/rebuttal rounds per side (1-10).
+            context: Optional domain context.
+
+        Returns:
+            DebateTranscript dataclass with full argument history and verdict.
+
+        Raises:
+            ValueError: If proposition is empty or rounds is out of range.
+        """
+        if not proposition.strip():
+            raise ValueError("Proposition cannot be empty for debate simulation.")
+        if not (1 <= rounds <= 10):
+            raise ValueError(f"rounds must be between 1 and 10. Got {rounds}.")
+
+        transcript = await self._simulator.run_debate(
+            proposition=proposition,
+            rounds=rounds,
+            context=context,
+        )
+        verdict = getattr(transcript, "verdict", "unknown")
+        logger.info(
+            "Debate simulation complete",
+            rounds=rounds,
+            verdict=verdict,
+        )
+        return transcript
+
+
+class SkillAtrophyService:
+    """Manages skill proficiency tracking and atrophy monitoring.
+
+    Wraps AtrophyMonitor adapter with service-level multi-user session
+    management, alert dispatch, and refresher recommendation generation.
+    Complements AtrophyMonitorService (which handles DB persistence)
+    by providing real-time in-memory decay tracking.
+    """
+
+    def __init__(self, atrophy_adapter: IAtrophyMonitorAdapter) -> None:
+        """Initialise SkillAtrophyService.
+
+        Args:
+            atrophy_adapter: IAtrophyMonitorAdapter implementation.
+        """
+        self._monitor = atrophy_adapter
+
+    def record_usage(
+        self,
+        user_id: str,
+        skill_name: str,
+        skill_domain: str,
+        current_proficiency: float,
+    ) -> Any:
+        """Record a skill usage event and reset its decay clock.
+
+        Args:
+            user_id: User identifier string.
+            skill_name: Name of the skill used.
+            skill_domain: Domain category of the skill.
+            current_proficiency: Current proficiency score (0.0–1.0).
+
+        Returns:
+            Updated SkillRecord dataclass.
+
+        Raises:
+            ValueError: If current_proficiency is not in 0.0–1.0.
+        """
+        if not 0.0 <= current_proficiency <= 1.0:
+            raise ValueError(
+                f"current_proficiency must be in [0.0, 1.0]. Got {current_proficiency}."
+            )
+
+        record = self._monitor.update_skill_usage(
+            user_id=user_id,
+            skill_name=skill_name,
+            skill_domain=skill_domain,
+            current_proficiency=current_proficiency,
+        )
+        logger.info(
+            "Skill usage recorded",
+            user_id=user_id,
+            skill_name=skill_name,
+            current_proficiency=current_proficiency,
+        )
+        return record
+
+    def decay_and_alert(
+        self,
+        user_id: str,
+        skill_name: str,
+        days_elapsed: float,
+    ) -> dict[str, Any]:
+        """Apply decay to a skill and return any triggered alerts.
+
+        Args:
+            user_id: User identifier string.
+            skill_name: Name of the skill to decay.
+            days_elapsed: Days elapsed since last usage.
+
+        Returns:
+            Dict with updated_record and alerts keys.
+
+        Raises:
+            ValueError: If days_elapsed is negative.
+        """
+        if days_elapsed < 0:
+            raise ValueError(f"days_elapsed cannot be negative. Got {days_elapsed}.")
+
+        updated_record = self._monitor.apply_decay(
+            user_id=user_id,
+            skill_name=skill_name,
+            days_elapsed=days_elapsed,
+        )
+        alerts = self._monitor.check_and_dispatch_alerts(user_id=user_id)
+
+        if alerts:
+            logger.warning(
+                "Skill atrophy alerts triggered",
+                user_id=user_id,
+                alert_count=len(alerts),
+            )
+
+        return {
+            "updated_record": updated_record,
+            "alerts": alerts,
+        }
+
+    def get_recommendations(self, user_id: str) -> list[str]:
+        """Get refresher training recommendations for at-risk skills.
+
+        Args:
+            user_id: User identifier string.
+
+        Returns:
+            List of recommendation strings.
+        """
+        recommendations = self._monitor.get_refresher_recommendations(user_id=user_id)
+        logger.info(
+            "Refresher recommendations generated",
+            user_id=user_id,
+            count=len(recommendations),
+        )
+        return recommendations

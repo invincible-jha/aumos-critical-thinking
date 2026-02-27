@@ -539,3 +539,501 @@ class IChallengeGeneratorAdapter(Protocol):
             expected_reasoning, correct_approach, and target_skills fields.
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# New adapter-layer Protocol interfaces (added with Phase 5 adapters)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class IReasoningFrameworkAdapter(Protocol):
+    """Interface for the reasoning framework adapter.
+
+    Supports Chain-of-Thought (CoT) and Tree-of-Thought (ToT) decomposition
+    strategies for structured reasoning traces.
+    """
+
+    async def decompose_chain_of_thought(
+        self,
+        problem: str,
+        context: dict[str, Any] | None,
+        max_steps: int,
+    ) -> Any:
+        """Decompose a problem using Chain-of-Thought reasoning.
+
+        Args:
+            problem: Problem or question to reason about.
+            context: Optional context dict with domain, constraints, and background.
+            max_steps: Maximum reasoning steps to generate.
+
+        Returns:
+            ReasoningPath dataclass with steps and confidence.
+        """
+        ...
+
+    async def explore_tree_of_thought(
+        self,
+        problem: str,
+        context: dict[str, Any] | None,
+        branching_factor: int,
+        max_depth: int,
+    ) -> list[Any]:
+        """Explore multiple reasoning paths using Tree-of-Thought.
+
+        Args:
+            problem: Problem to reason about.
+            context: Optional context dict.
+            branching_factor: Number of branches to explore at each node.
+            max_depth: Maximum tree depth.
+
+        Returns:
+            List of ReasoningPath dataclasses, one per explored branch.
+        """
+        ...
+
+    async def select_best_path(self, paths: list[Any]) -> Any:
+        """Select the highest-quality reasoning path from a set of candidates.
+
+        Args:
+            paths: List of ReasoningPath candidates.
+
+        Returns:
+            Best-scoring ReasoningPath.
+        """
+        ...
+
+    async def create_reasoning_trace(
+        self,
+        problem: str,
+        context: dict[str, Any] | None,
+        strategy: str,
+        max_steps: int,
+    ) -> Any:
+        """Build a complete reasoning trace for a problem.
+
+        Args:
+            problem: Problem to reason about.
+            context: Optional context dict.
+            strategy: chain_of_thought | tree_of_thought | auto.
+            max_steps: Maximum steps / branching limit.
+
+        Returns:
+            ReasoningTrace dataclass with selected path and metadata.
+        """
+        ...
+
+
+@runtime_checkable
+class IArgumentExtractorAdapter(Protocol):
+    """Interface for the argument extraction adapter."""
+
+    async def extract_arguments(
+        self,
+        text: str,
+        domain: str | None,
+    ) -> list[Any]:
+        """Extract structured arguments from a body of text.
+
+        Args:
+            text: Source text to analyse.
+            domain: Optional domain context for better classification.
+
+        Returns:
+            List of Argument dataclasses.
+        """
+        ...
+
+    async def build_argument_graph(
+        self,
+        arguments: list[Any],
+    ) -> Any:
+        """Build a graph structure linking arguments via support/counter relations.
+
+        Args:
+            arguments: List of Argument dataclasses.
+
+        Returns:
+            ArgumentGraph dataclass with adjacency data.
+        """
+        ...
+
+    async def score_argument_strength(self, argument: Any) -> float:
+        """Score the logical strength of an argument.
+
+        Args:
+            argument: Argument dataclass to score.
+
+        Returns:
+            Strength score (0.0–1.0).
+        """
+        ...
+
+
+@runtime_checkable
+class IFallacyDetectorAdapter(Protocol):
+    """Interface for the logical fallacy detector adapter."""
+
+    async def detect_fallacies(
+        self,
+        text: str,
+        context: str | None,
+    ) -> list[Any]:
+        """Detect logical fallacies in a text.
+
+        Args:
+            text: Source text to analyse.
+            context: Optional contextual description.
+
+        Returns:
+            List of FallacyDetection dataclasses.
+        """
+        ...
+
+    async def generate_report(
+        self,
+        text: str,
+        detections: list[Any],
+        context: str | None,
+    ) -> Any:
+        """Generate a structured fallacy report for a text.
+
+        Args:
+            text: The analysed text.
+            detections: List of FallacyDetection results.
+            context: Optional context description.
+
+        Returns:
+            FallacyReport dataclass with severity and recommendations.
+        """
+        ...
+
+
+@runtime_checkable
+class IEvidenceGathererAdapter(Protocol):
+    """Interface for the evidence gatherer adapter."""
+
+    async def extract_claims(self, text: str) -> list[Any]:
+        """Extract verifiable claims from a text.
+
+        Args:
+            text: Source text to analyse.
+
+        Returns:
+            List of Claim dataclasses.
+        """
+        ...
+
+    async def fact_check(self, claim: Any, context: str | None) -> Any:
+        """Fact-check a single claim using available evidence.
+
+        Args:
+            claim: Claim dataclass to evaluate.
+            context: Optional domain context.
+
+        Returns:
+            FactCheckResult dataclass with verdict and confidence.
+        """
+        ...
+
+    async def build_evidence_chain(
+        self,
+        claims: list[Any],
+        context: str | None,
+    ) -> Any:
+        """Build a chain of evidence linking claims to sources.
+
+        Args:
+            claims: List of Claim dataclasses.
+            context: Optional domain context.
+
+        Returns:
+            EvidenceChain dataclass.
+        """
+        ...
+
+
+@runtime_checkable
+class ICognitiveBiasDetectorAdapter(Protocol):
+    """Interface for the cognitive bias detector adapter.
+
+    Distinct from IBiasDetectionRepository — this detects cognitive reasoning
+    biases in text/arguments, not automation bias in human-AI decisions.
+    """
+
+    async def detect_biases(
+        self,
+        text: str,
+        context: str | None,
+    ) -> Any:
+        """Detect cognitive biases in a text or argument.
+
+        Args:
+            text: Source text to analyse.
+            context: Optional domain context.
+
+        Returns:
+            CognitiveBiasDetectionResult dataclass.
+        """
+        ...
+
+    async def recommend_mitigations(
+        self,
+        result: Any,
+    ) -> list[str]:
+        """Generate bias mitigation recommendations.
+
+        Args:
+            result: CognitiveBiasDetectionResult dataclass.
+
+        Returns:
+            List of mitigation recommendation strings.
+        """
+        ...
+
+
+@runtime_checkable
+class IAlternativeGeneratorAdapter(Protocol):
+    """Interface for the alternative hypothesis generator adapter."""
+
+    async def generate_alternatives(
+        self,
+        hypothesis: str,
+        context: dict[str, Any] | None,
+        count: int,
+    ) -> list[Any]:
+        """Generate alternative hypotheses to a given proposition.
+
+        Args:
+            hypothesis: The hypothesis to generate alternatives for.
+            context: Optional domain context.
+            count: Number of alternatives to generate.
+
+        Returns:
+            List of Hypothesis dataclasses.
+        """
+        ...
+
+    async def devil_advocate(
+        self,
+        hypothesis: str,
+        context: dict[str, Any] | None,
+    ) -> Any:
+        """Generate a devil's advocate argument challenging a hypothesis.
+
+        Args:
+            hypothesis: Hypothesis to challenge.
+            context: Optional domain context.
+
+        Returns:
+            Hypothesis dataclass representing the opposing argument.
+        """
+        ...
+
+    async def build_comparison_matrix(
+        self,
+        hypotheses: list[Any],
+        dimensions: list[str] | None,
+    ) -> Any:
+        """Build a multi-dimensional comparison matrix for hypothesis ranking.
+
+        Args:
+            hypotheses: List of Hypothesis dataclasses.
+            dimensions: Optional scoring dimensions (defaults to standard set).
+
+        Returns:
+            HypothesisComparisonMatrix dataclass.
+        """
+        ...
+
+
+@runtime_checkable
+class IConfidenceScorerAdapter(Protocol):
+    """Interface for the reasoning confidence scorer adapter.
+
+    A pure-computation adapter — no LLM dependency required.
+    """
+
+    def compute_composite_confidence(
+        self,
+        evidence_confidence: Any,
+        logic_confidence: Any,
+        assumption_confidence: Any,
+    ) -> Any:
+        """Compute a composite confidence score from component assessments.
+
+        Args:
+            evidence_confidence: EvidenceConfidence dataclass.
+            logic_confidence: LogicConfidence dataclass.
+            assumption_confidence: AssumptionConfidence dataclass.
+
+        Returns:
+            ConfidenceReport dataclass with composite score and interval.
+        """
+        ...
+
+    def detect_overconfidence(self, report: Any) -> bool:
+        """Detect if a reasoning claim is potentially overconfident.
+
+        Args:
+            report: ConfidenceReport dataclass.
+
+        Returns:
+            True if overconfidence is likely, False otherwise.
+        """
+        ...
+
+    def generate_report(
+        self,
+        claim: str,
+        evidence_items: list[Any],
+        assumptions: list[str],
+        reasoning_steps: list[Any],
+    ) -> Any:
+        """Generate a full confidence report for a claim.
+
+        Args:
+            claim: The claim being evaluated.
+            evidence_items: Supporting evidence items.
+            assumptions: List of assumptions underlying the claim.
+            reasoning_steps: ReasoningStep dataclasses used to arrive at the claim.
+
+        Returns:
+            ConfidenceReport dataclass.
+        """
+        ...
+
+
+@runtime_checkable
+class IDebateSimulatorAdapter(Protocol):
+    """Interface for the debate simulator adapter."""
+
+    async def generate_opening_arguments(
+        self,
+        proposition: str,
+        position: str,
+        context: dict[str, Any] | None,
+    ) -> Any:
+        """Generate opening arguments for a debate position.
+
+        Args:
+            proposition: The debate proposition.
+            position: pro | con | neutral.
+            context: Optional domain context.
+
+        Returns:
+            DebateArgument dataclass.
+        """
+        ...
+
+    async def generate_rebuttal(
+        self,
+        proposition: str,
+        position: str,
+        prior_argument: Any,
+        context: dict[str, Any] | None,
+    ) -> Any:
+        """Generate a rebuttal to a prior debate argument.
+
+        Args:
+            proposition: The debate proposition.
+            position: The rebutting position: pro | con.
+            prior_argument: DebateArgument being rebutted.
+            context: Optional domain context.
+
+        Returns:
+            DebateArgument dataclass representing the rebuttal.
+        """
+        ...
+
+    async def run_debate(
+        self,
+        proposition: str,
+        rounds: int,
+        context: dict[str, Any] | None,
+    ) -> Any:
+        """Run a full structured debate for a proposition.
+
+        Args:
+            proposition: The proposition to debate.
+            rounds: Number of argument/rebuttal rounds per side.
+            context: Optional domain context.
+
+        Returns:
+            DebateTranscript dataclass with full argument history and verdict.
+        """
+        ...
+
+
+@runtime_checkable
+class IAtrophyMonitorAdapter(Protocol):
+    """Interface for the skill atrophy monitor adapter.
+
+    Tracks proficiency over time using exponential decay modeling.
+    """
+
+    def update_skill_usage(
+        self,
+        user_id: str,
+        skill_name: str,
+        skill_domain: str,
+        current_proficiency: float,
+    ) -> Any:
+        """Record a skill usage event and reset its decay clock.
+
+        Args:
+            user_id: User identifier string.
+            skill_name: Name of the skill used.
+            skill_domain: Domain category of the skill.
+            current_proficiency: Current proficiency score (0.0–1.0).
+
+        Returns:
+            Updated SkillRecord dataclass.
+        """
+        ...
+
+    def apply_decay(
+        self,
+        user_id: str,
+        skill_name: str,
+        days_elapsed: float,
+    ) -> Any:
+        """Apply exponential decay to a skill's proficiency score.
+
+        Args:
+            user_id: User identifier string.
+            skill_name: Name of the skill to decay.
+            days_elapsed: Days elapsed since last usage.
+
+        Returns:
+            Updated SkillRecord dataclass with decayed proficiency.
+        """
+        ...
+
+    def check_and_dispatch_alerts(
+        self,
+        user_id: str,
+    ) -> list[Any]:
+        """Check all skills for atrophy risk and return alerts.
+
+        Args:
+            user_id: User identifier string.
+
+        Returns:
+            List of AtrophyAlert dataclasses for skills below thresholds.
+        """
+        ...
+
+    def get_refresher_recommendations(
+        self,
+        user_id: str,
+    ) -> list[str]:
+        """Generate refresher training recommendations for at-risk skills.
+
+        Args:
+            user_id: User identifier string.
+
+        Returns:
+            List of recommendation strings.
+        """
+        ...
