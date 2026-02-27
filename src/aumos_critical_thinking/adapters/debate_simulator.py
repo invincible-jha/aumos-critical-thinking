@@ -296,7 +296,9 @@ class DebateSimulator:
             f"CON argument: {con_argument.content}\n\n"
             "For each criterion, assign a score to PRO (0.0-10.0) and CON (0.0-10.0). "
             "Provide a brief rationale.\n\n"
-            f'Return JSON: {{"criteria": {{{", ".join(f\'"{c}": {{"pro": 0.0, "con": 0.0}}\' for c in criteria_list)}}}, "rationale": "..."}}'
+            "Return JSON: {\"criteria\": {"
+            + ", ".join(f'"{c}": {{"pro": 0.0, "con": 0.0}}' for c in criteria_list)
+            + "}, \"rationale\": \"...\"}"
         )
         result = await self._call_llm_json(prompt)
 
